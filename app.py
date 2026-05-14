@@ -1,23 +1,24 @@
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
+import json
 
 import streamlit as st
 
-from rag_engine.agents import (
+from agents import (
     ChunkingEmbeddingAgent,
     DocumentIngestionAgent,
-    RetrievalConversationAgent,
+    RagConversationAgent,
     TextExtractionAgent,
 )
-from rag_engine.models import ChatTurn
+from core.config import OLLAMA_MODEL, ensure_data_dirs
+from core.schemas import ChatTurn
 
 
 st.set_page_config(page_title="RAG Chat Engine", page_icon="A", layout="wide")
 
 
 def initialize_state() -> None:
+    ensure_data_dirs()
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
     if "vector_store" not in st.session_state:
@@ -31,23 +32,15 @@ def process_uploads(uploaded_files) -> None:
     extraction_agent = TextExtractionAgent()
     chunking_agent = ChunkingEmbeddingAgent()
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        saved_paths: list[Path] = []
-        for uploaded in uploaded_files:
-            path = Path(tmpdir) / uploaded.name
-            path.write_bytes(uploaded.getbuffer())
-            saved_paths.append(path)
-
-        validation = ingestion_agent.validate(saved_paths)
-        valid_docs = [doc for doc in validation.documents if doc.is_valid]
-        extracted = extraction_agent.extract(valid_docs)
-        vector_store = chunking_agent.index(extracted.documents)
+    ingestion = ingestion_agent.validate_uploads(uploaded_files)
+    extraction = extraction_agent.extract(ingestion.session_id, ingestion.documents)
+    vector_store, indexing = chunking_agent.index(ingestion.session_id, extraction.documents)
 
     st.session_state.vector_store = vector_store
     st.session_state.pipeline_report = {
-        "validation": validation,
-        "extraction": extracted,
-        "chunks": len(vector_store.chunks),
+        "ingestion": ingestion,
+        "extraction": extraction,
+        "indexing": indexing,
     }
     st.session_state.chat_history = []
 
@@ -58,24 +51,61 @@ def render_pipeline_report() -> None:
         st.info("Upload documents to build the retrieval index.")
         return
 
-    validation = report["validation"]
+    ingestion = report["ingestion"]
     extraction = report["extraction"]
-    st.success(f"Indexed {report['chunks']} chunks from {len(extraction.documents)} document(s).")
+    indexing = report["indexing"]
+    st.success(
+        f"Indexed {indexing.chunks_indexed} chunks into `{indexing.collection_name}` "
+        f"from {len(extraction.documents)} document(s)."
+    )
 
     with st.expander("Agent handoff report", expanded=False):
         st.write("**Agent 1 - validation**")
-        for doc in validation.documents:
+        st.code(
+            json.dumps(
+                {
+                "session_id": ingestion.session_id,
+                "documents": [
+                    {
+                        "doc_id": doc.doc_id,
+                        "filename": doc.filename,
+                        "file_path": str(doc.file_path),
+                        "file_type": doc.file_type,
+                        "page_count": doc.page_count,
+                        "status": doc.status,
+                    }
+                    for doc in ingestion.documents
+                ],
+            },
+                indent=2,
+            ),
+            language="json",
+        )
+        for doc in ingestion.documents:
             icon = "OK" if doc.is_valid else "Skipped"
-            st.write(f"{icon}: {doc.name} ({doc.file_type}, {doc.page_count or 'unknown'} page(s))")
+            st.write(f"{icon}: {doc.filename} ({doc.file_type}, {doc.page_count or 'unknown'} page(s))")
             for issue in doc.issues:
-                st.warning(f"{doc.name}: {issue}")
+                st.warning(f"{doc.filename}: {issue}")
 
         st.write("**Agent 2 - extraction**")
         for doc in extraction.documents:
             extracted_chars = sum(len(page.text) for page in doc.pages)
-            st.write(f"{doc.name}: {len(doc.pages)} page(s), {extracted_chars:,} extracted characters")
+            st.write(f"{doc.filename}: {len(doc.pages)} page(s), {extracted_chars:,} extracted characters")
             for warning in doc.warnings:
-                st.warning(f"{doc.name}: {warning}")
+                st.warning(f"{doc.filename}: {warning}")
+
+        st.write("**Agent 3 - chunk + embed**")
+        st.code(
+            json.dumps(
+                {
+                "chunks_indexed": indexing.chunks_indexed,
+                "collection_name": indexing.collection_name,
+                "status": indexing.status,
+            },
+                indent=2,
+            ),
+            language="json",
+        )
 
 
 def render_chat() -> None:
@@ -84,7 +114,7 @@ def render_chat() -> None:
         st.chat_message("assistant").write("Upload and index documents first, then ask me about them.")
         return
 
-    agent = RetrievalConversationAgent(vector_store=vector_store)
+    agent = RagConversationAgent(vector_store=vector_store)
 
     for turn in st.session_state.chat_history:
         st.chat_message(turn.role).write(turn.content)
@@ -104,17 +134,40 @@ def render_chat() -> None:
         if response.sources:
             st.caption("Sources: " + "; ".join(source.label for source in response.sources))
         with st.expander("Retrieval transparency", expanded=False):
+            st.write("**Agent 4 output**")
+            st.code(
+                json.dumps(
+                    {
+                    "answer": response.answer,
+                    "sources": [
+                        {
+                            "document": source.document,
+                            "page": source.page,
+                            "chunk_id": source.chunk_id,
+                            "similarity_score": round(source.similarity_score, 3),
+                        }
+                        for source in response.sources
+                    ],
+                },
+                    indent=2,
+                ),
+                language="json",
+            )
             st.write("**Structured prompt**")
             st.code(response.prompt, language="text")
             st.write("**Retrieved chunks**")
             for match in response.matches:
-                st.markdown(f"- `{match.score:.3f}` {match.chunk.source_label}")
+                st.markdown(f"- `{match.similarity_score:.3f}` {match.chunk.source_label}")
 
 
 def main() -> None:
     initialize_state()
 
     st.title("Multi-Agent RAG Chat Engine")
+    st.caption(
+        "Streamlit + PyMuPDF + EasyOCR + sentence-transformers/all-MiniLM-L6-v2 + "
+        f"ChromaDB + Ollama `{OLLAMA_MODEL}`"
+    )
 
     left, right = st.columns([0.34, 0.66], gap="large")
     with left:

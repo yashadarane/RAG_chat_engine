@@ -6,17 +6,23 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class ValidatedDocument:
-    path: Path
-    name: str
+    session_id: str
+    doc_id: str
+    filename: str
+    file_path: Path
     file_type: str
     page_count: int | None
-    size_bytes: int
-    is_valid: bool
+    status: str
     issues: list[str] = field(default_factory=list)
+
+    @property
+    def is_valid(self) -> bool:
+        return self.status == "validated"
 
 
 @dataclass(frozen=True)
-class ValidationReport:
+class IngestionOutput:
+    session_id: str
     documents: list[ValidatedDocument]
 
 
@@ -28,43 +34,60 @@ class ExtractedPage:
 
 @dataclass(frozen=True)
 class ExtractedDocument:
-    name: str
+    doc_id: str
+    filename: str
     file_type: str
     pages: list[ExtractedPage]
     warnings: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
-class ExtractionReport:
+class ExtractionOutput:
+    session_id: str
     documents: list[ExtractedDocument]
 
 
 @dataclass(frozen=True)
 class TextChunk:
-    id: str
-    document_name: str
+    chunk_id: str
+    doc_id: str
+    filename: str
     page_number: int
     text: str
 
     @property
     def source_label(self) -> str:
-        return f"{self.document_name}, page {self.page_number}"
+        return f"{self.filename}, page {self.page_number}"
+
+
+@dataclass(frozen=True)
+class IndexingOutput:
+    session_id: str
+    collection_name: str
+    chunks_indexed: int
+    status: str
 
 
 @dataclass(frozen=True)
 class SearchMatch:
     chunk: TextChunk
-    score: float
+    similarity_score: float
+
+    @property
+    def score(self) -> float:
+        return self.similarity_score
 
 
 @dataclass(frozen=True)
 class Source:
-    document_name: str
-    page_number: int
+    document: str
+    page: int
+    chunk_id: str
+    similarity_score: float
 
     @property
     def label(self) -> str:
-        return f"{self.document_name}, page {self.page_number}"
+        return f"{self.document}, page {self.page} ({self.similarity_score:.2f})"
 
 
 @dataclass(frozen=True)
@@ -74,8 +97,8 @@ class ChatTurn:
 
 
 @dataclass(frozen=True)
-class AnswerResponse:
+class RagOutput:
     answer: str
+    sources: list[Source]
     prompt: str
     matches: list[SearchMatch]
-    sources: list[Source]

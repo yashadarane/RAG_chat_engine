@@ -1,4 +1,5 @@
 .docx_extract/
+changes.md
 
 # Python bytecode and test caches
 __pycache__/
