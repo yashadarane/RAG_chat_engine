@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
@@ -14,8 +15,10 @@ MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024
 SUPPORTED_IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 SUPPORTED_TYPES = {".pdf", *SUPPORTED_IMAGE_TYPES}
 
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-OLLAMA_MODEL = "mistral"
+EMBEDDING_MODEL = str(BASE_DIR / "models" / "all-MiniLM-L6-v2")
+GROQ_API_BASE_URL = os.getenv("GROQ_API_BASE_URL", "https://api.groq.com/openai/v1")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_TIMEOUT_SECONDS = int(os.getenv("GROQ_TIMEOUT_SECONDS", "120"))
 TOP_K = 5
 MIN_SIMILARITY = 0.25
 CHUNK_WORDS = 420

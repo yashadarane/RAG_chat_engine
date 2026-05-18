@@ -19,6 +19,7 @@ ENV/
 
 # Streamlit local state
 .streamlit/secrets.toml
+.env
 
 # Local runtime data and uploaded documents
 uploads/
@@ -33,3 +34,4 @@ Thumbs.db
 .vscode/
 
 .docx
+models/

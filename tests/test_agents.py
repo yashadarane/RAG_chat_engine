@@ -1,7 +1,8 @@
 from pathlib import Path
 
-from agents import ChunkingEmbeddingAgent, DocumentIngestionAgent, RagConversationAgent
+from agents import ChunkingEmbeddingAgent, ConversationAgent, DocumentIngestionAgent, RetrievalAgent
 from core.schemas import ChatTurn, ExtractedDocument, ExtractedPage
+from utils.transcript_export import conversation_to_pdf, conversation_to_text
 
 
 class FakeEmbeddings:
@@ -51,9 +52,15 @@ def test_retrieval_returns_grounded_source() -> None:
         embedding_function=FakeEmbeddings(),
     ).index("testretrieval", [document])
 
-    response = RagConversationAgent(store, llm_client=FakeLLM()).answer(
-        "What is the claims waiting period?",
-        [ChatTurn(role="user", content="What is the claims waiting period?")],
+    query = "What is the claims waiting period?"
+    retrieval_agent = RetrievalAgent(store)
+    matches = retrieval_agent.retrieve(query)
+    sources = retrieval_agent.build_sources(matches)
+    response = ConversationAgent(llm_client=FakeLLM()).answer(
+        query,
+        [ChatTurn(role="user", content=query)],
+        matches,
+        sources,
     )
 
     assert "thirty days" in response.answer
@@ -70,9 +77,24 @@ def test_no_match_avoids_hallucination() -> None:
     )
     store, _ = ChunkingEmbeddingAgent(embedding_function=FakeEmbeddings()).index("testnomatch", [document])
 
-    response = RagConversationAgent(store, llm_client=FakeLLM(), min_similarity=0.5).answer(
-        "What is the car premium?",
-        [],
-    )
+    query = "What is the car premium?"
+    retrieval_agent = RetrievalAgent(store, min_similarity=0.5)
+    matches = retrieval_agent.retrieve(query)
+    sources = retrieval_agent.build_sources(matches)
+    response = ConversationAgent(llm_client=FakeLLM()).answer(query, [], matches, sources)
 
     assert response.answer == "I could not find that in the uploaded documents."
+
+
+def test_transcript_exports_text_and_pdf() -> None:
+    history = [
+        ChatTurn(role="user", content="What is covered?"),
+        ChatTurn(role="assistant", content="Coverage is listed on page 1."),
+    ]
+
+    text = conversation_to_text(history)
+    pdf = conversation_to_pdf(history)
+
+    assert "USER:" in text
+    assert "ASSISTANT:" in text
+    assert pdf.startswith(b"%PDF-1.4")

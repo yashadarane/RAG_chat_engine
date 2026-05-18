@@ -6,12 +6,14 @@ import streamlit as st
 
 from agents import (
     ChunkingEmbeddingAgent,
+    ConversationAgent,
     DocumentIngestionAgent,
-    RagConversationAgent,
+    RetrievalAgent,
     TextExtractionAgent,
 )
-from core.config import OLLAMA_MODEL, ensure_data_dirs
-from core.schemas import ChatTurn
+from core.config import GROQ_MODEL, ensure_data_dirs
+from core.schemas import ChatTurn, RagOutput
+from utils.transcript_export import conversation_to_pdf, conversation_to_text
 
 
 st.set_page_config(page_title="RAG Chat Engine", page_icon="A", layout="wide")
@@ -64,19 +66,19 @@ def render_pipeline_report() -> None:
         st.code(
             json.dumps(
                 {
-                "session_id": ingestion.session_id,
-                "documents": [
-                    {
-                        "doc_id": doc.doc_id,
-                        "filename": doc.filename,
-                        "file_path": str(doc.file_path),
-                        "file_type": doc.file_type,
-                        "page_count": doc.page_count,
-                        "status": doc.status,
-                    }
-                    for doc in ingestion.documents
-                ],
-            },
+                    "session_id": ingestion.session_id,
+                    "documents": [
+                        {
+                            "doc_id": doc.doc_id,
+                            "filename": doc.filename,
+                            "file_path": str(doc.file_path),
+                            "file_type": doc.file_type,
+                            "page_count": doc.page_count,
+                            "status": doc.status,
+                        }
+                        for doc in ingestion.documents
+                    ],
+                },
                 indent=2,
             ),
             language="json",
@@ -98,10 +100,10 @@ def render_pipeline_report() -> None:
         st.code(
             json.dumps(
                 {
-                "chunks_indexed": indexing.chunks_indexed,
-                "collection_name": indexing.collection_name,
-                "status": indexing.status,
-            },
+                    "chunks_indexed": indexing.chunks_indexed,
+                    "collection_name": indexing.collection_name,
+                    "status": indexing.status,
+                },
                 indent=2,
             ),
             language="json",
@@ -114,50 +116,86 @@ def render_chat() -> None:
         st.chat_message("assistant").write("Upload and index documents first, then ask me about them.")
         return
 
-    agent = RagConversationAgent(vector_store=vector_store)
+    retrieval_agent = RetrievalAgent(vector_store=vector_store)
+    conversation_agent = ConversationAgent()
+    message_container = st.container()
+    export_container = st.container()
 
-    for turn in st.session_state.chat_history:
-        st.chat_message(turn.role).write(turn.content)
+    query = st.chat_input("Ask a question grounded in the uploaded documents", key="document_chat_input")
 
-    query = st.chat_input("Ask a question grounded in the uploaded documents")
-    if not query:
+    latest_response: RagOutput | None = None
+    if query:
+        st.session_state.chat_history.append(ChatTurn(role="user", content=query))
+        matches = retrieval_agent.retrieve(query)
+        sources = retrieval_agent.build_sources(matches)
+        latest_response = conversation_agent.answer(query, st.session_state.chat_history[-6:], matches, sources)
+        st.session_state.chat_history.append(ChatTurn(role="assistant", content=latest_response.answer))
+
+    with message_container:
+        for turn in st.session_state.chat_history:
+            st.chat_message(turn.role).write(turn.content)
+
+        if latest_response:
+            if latest_response.sources:
+                st.caption("Sources: " + "; ".join(source.label for source in latest_response.sources))
+            with st.expander("Retrieval transparency", expanded=False):
+                render_retrieval_transparency(latest_response)
+
+    with export_container:
+        render_conversation_exports()
+
+
+def render_retrieval_transparency(response: RagOutput) -> None:
+    st.write("**Agent 4B output**")
+    st.code(
+        json.dumps(
+            {
+                "answer": response.answer,
+                "sources": [
+                    {
+                        "document": source.document,
+                        "page": source.page,
+                        "chunk_id": source.chunk_id,
+                        "similarity_score": round(source.similarity_score, 3),
+                    }
+                    for source in response.sources
+                ],
+            },
+            indent=2,
+        ),
+        language="json",
+    )
+    st.write("**Structured prompt**")
+    st.code(response.prompt, language="text")
+    st.write("**Agent 4A retrieved chunks**")
+    for match in response.matches:
+        st.markdown(f"- `{match.similarity_score:.3f}` {match.chunk.source_label}")
+
+
+def render_conversation_exports() -> None:
+    history = st.session_state.chat_history
+    if not history:
         return
 
-    st.session_state.chat_history.append(ChatTurn(role="user", content=query))
-    st.chat_message("user").write(query)
-
-    response = agent.answer(query, st.session_state.chat_history[-6:])
-    st.session_state.chat_history.append(ChatTurn(role="assistant", content=response.answer))
-
-    with st.chat_message("assistant"):
-        st.write(response.answer)
-        if response.sources:
-            st.caption("Sources: " + "; ".join(source.label for source in response.sources))
-        with st.expander("Retrieval transparency", expanded=False):
-            st.write("**Agent 4 output**")
-            st.code(
-                json.dumps(
-                    {
-                    "answer": response.answer,
-                    "sources": [
-                        {
-                            "document": source.document,
-                            "page": source.page,
-                            "chunk_id": source.chunk_id,
-                            "similarity_score": round(source.similarity_score, 3),
-                        }
-                        for source in response.sources
-                    ],
-                },
-                    indent=2,
-                ),
-                language="json",
-            )
-            st.write("**Structured prompt**")
-            st.code(response.prompt, language="text")
-            st.write("**Retrieved chunks**")
-            for match in response.matches:
-                st.markdown(f"- `{match.similarity_score:.3f}` {match.chunk.source_label}")
+    txt_data = conversation_to_text(history).encode("utf-8")
+    pdf_data = conversation_to_pdf(history)
+    txt_col, pdf_col = st.columns(2)
+    with txt_col:
+        st.download_button(
+            "Download TXT",
+            data=txt_data,
+            file_name="rag_chat_conversation.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+    with pdf_col:
+        st.download_button(
+            "Download PDF",
+            data=pdf_data,
+            file_name="rag_chat_conversation.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
 
 
 def main() -> None:
@@ -166,7 +204,7 @@ def main() -> None:
     st.title("Multi-Agent RAG Chat Engine")
     st.caption(
         "Streamlit + PyMuPDF + EasyOCR + sentence-transformers/all-MiniLM-L6-v2 + "
-        f"ChromaDB + Ollama `{OLLAMA_MODEL}`"
+        f"ChromaDB + Groq `{GROQ_MODEL}`"
     )
 
     left, right = st.columns([0.34, 0.66], gap="large")
