@@ -3,7 +3,7 @@ from __future__ import annotations
 from core.llm_client import GroqLLMClient
 from core.ports import LanguageModelClient
 from core.prompts import build_grounded_prompt
-from core.schemas import ChatTurn, RagOutput, SearchMatch, Source
+from core.schemas import ChatTurn, RagOutput, RetrievalOutput
 
 
 class ConversationAgent:
@@ -16,17 +16,17 @@ class ConversationAgent:
         self,
         query: str,
         history: list[ChatTurn],
-        matches: list[SearchMatch],
-        sources: list[Source],
+        retrieval: RetrievalOutput,
     ) -> RagOutput:
-        prompt = build_grounded_prompt(query, history[-6:], matches)
+        prompt = build_grounded_prompt(query, history[-6:], retrieval.matches, retrieval.mode)
 
-        if not matches:
+        if not retrieval.matches:
             return RagOutput(
                 answer="I could not find that in the uploaded documents.",
                 sources=[],
                 prompt=prompt,
                 matches=[],
+                retrieval_mode=retrieval.mode,
             )
 
         try:
@@ -37,4 +37,10 @@ class ConversationAgent:
                 f"and that the API is reachable. Error: {exc}"
             )
 
-        return RagOutput(answer=answer, sources=sources, prompt=prompt, matches=matches)
+        return RagOutput(
+            answer=answer,
+            sources=retrieval.sources,
+            prompt=prompt,
+            matches=retrieval.matches,
+            retrieval_mode=retrieval.mode,
+        )

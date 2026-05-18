@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 
@@ -90,6 +91,19 @@ class Source:
         return f"{self.document}, page {self.page} ({self.similarity_score:.2f})"
 
 
+class RetrievalMode(str, Enum):
+    FOCUSED = "focused"
+    BROAD = "broad"
+    EXHAUSTIVE = "exhaustive"
+
+
+@dataclass(frozen=True)
+class RetrievalOutput:
+    mode: RetrievalMode
+    matches: list[SearchMatch]
+    sources: list[Source]
+
+
 @dataclass(frozen=True)
 class ChatTurn:
     role: str
@@ -102,3 +116,4 @@ class RagOutput:
     sources: list[Source]
     prompt: str
     matches: list[SearchMatch]
+    retrieval_mode: RetrievalMode = RetrievalMode.FOCUSED

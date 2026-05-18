@@ -126,9 +126,8 @@ def render_chat() -> None:
     latest_response: RagOutput | None = None
     if query:
         st.session_state.chat_history.append(ChatTurn(role="user", content=query))
-        matches = retrieval_agent.retrieve(query)
-        sources = retrieval_agent.build_sources(matches)
-        latest_response = conversation_agent.answer(query, st.session_state.chat_history[-6:], matches, sources)
+        retrieval = retrieval_agent.retrieve(query)
+        latest_response = conversation_agent.answer(query, st.session_state.chat_history[-6:], retrieval)
         st.session_state.chat_history.append(ChatTurn(role="assistant", content=latest_response.answer))
 
     with message_container:
@@ -146,6 +145,7 @@ def render_chat() -> None:
 
 
 def render_retrieval_transparency(response: RagOutput) -> None:
+    st.write(f"**Agent 4A retrieval mode:** `{response.retrieval_mode.value}`")
     st.write("**Agent 4B output**")
     st.code(
         json.dumps(

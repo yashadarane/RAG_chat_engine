@@ -97,10 +97,14 @@ Tests use fake embeddings and a fake LLM client, so they do not require Groq or 
 
 - Retrieval and response generation are split into `RetrievalAgent` and `ConversationAgent`. Each class has one reason to change, which keeps the chat pipeline closer to SOLID principles.
 - `ConversationAgent` depends on the `LanguageModelClient` protocol and `RetrievalAgent` depends on the `VectorSearchStore` protocol, not concrete Groq or Chroma classes. This follows dependency inversion and keeps provider coupling low.
+- `RetrievalAgent` chooses a retrieval mode before searching:
+  - `focused` for direct factual questions.
+  - `broad` for summaries, explanations, comparisons, and many-point questions.
+  - `exhaustive` for counts, totals, complete lists, and questions containing "all" or similar completeness language.
 - `GroqLLMClient` is an adapter around Groq's OpenAI-compatible Chat Completions endpoint. It uses the standard library HTTP client to avoid another runtime dependency.
 - Agent handoffs use typed dataclasses in `core/schemas.py`, giving each stage a clear input/output contract.
 - Retrieval is grounded by design: if no chunk passes the similarity threshold, the app returns a clear not-found response.
-- Groq receives only retrieved context, recent chat history, and the user query, reducing token use and limiting hallucination risk.
+- Groq receives only retrieved context, retrieval mode, recent chat history, and the user query, reducing token use and limiting hallucination risk.
 - Conversation export supports TXT and PDF using standard-library code, avoiding a new dependency for this feature.
 - Runtime data, uploaded files, local models, `.env`, and `changes.md` are ignored by git.
 

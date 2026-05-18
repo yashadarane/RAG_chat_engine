@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from agents import ChunkingEmbeddingAgent, ConversationAgent, DocumentIngestionAgent, RetrievalAgent
-from core.schemas import ChatTurn, ExtractedDocument, ExtractedPage
+from core.schemas import ChatTurn, ExtractedDocument, ExtractedPage, RetrievalMode
 from utils.transcript_export import conversation_to_pdf, conversation_to_text
 
 
@@ -54,16 +54,15 @@ def test_retrieval_returns_grounded_source() -> None:
 
     query = "What is the claims waiting period?"
     retrieval_agent = RetrievalAgent(store)
-    matches = retrieval_agent.retrieve(query)
-    sources = retrieval_agent.build_sources(matches)
+    retrieval = retrieval_agent.retrieve(query)
     response = ConversationAgent(llm_client=FakeLLM()).answer(
         query,
         [ChatTurn(role="user", content=query)],
-        matches,
-        sources,
+        retrieval,
     )
 
     assert "thirty days" in response.answer
+    assert response.retrieval_mode is RetrievalMode.FOCUSED
     assert response.sources[0].document == "policy.pdf"
     assert response.sources[0].page == 2
 
@@ -79,11 +78,22 @@ def test_no_match_avoids_hallucination() -> None:
 
     query = "What is the car premium?"
     retrieval_agent = RetrievalAgent(store, min_similarity=0.5)
-    matches = retrieval_agent.retrieve(query)
-    sources = retrieval_agent.build_sources(matches)
-    response = ConversationAgent(llm_client=FakeLLM()).answer(query, [], matches, sources)
+    retrieval = retrieval_agent.retrieve(query)
+    response = ConversationAgent(llm_client=FakeLLM()).answer(query, [], retrieval)
 
     assert response.answer == "I could not find that in the uploaded documents."
+
+
+def test_retrieval_agent_selects_modes() -> None:
+    class EmptyStore:
+        def search(self, query: str, top_k: int, min_similarity: float):
+            return []
+
+    agent = RetrievalAgent(EmptyStore())
+
+    assert agent.retrieve("What is the deductible?").mode is RetrievalMode.FOCUSED
+    assert agent.retrieve("Summarize the main points").mode is RetrievalMode.BROAD
+    assert agent.retrieve("List all exclusions and count them").mode is RetrievalMode.EXHAUSTIVE
 
 
 def test_transcript_exports_text_and_pdf() -> None:
