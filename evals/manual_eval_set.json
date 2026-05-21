@@ -1,0 +1,107 @@
+[
+  {
+    "id": "eval_001",
+    "question": "How many types of leave are mentioned?",
+    "reference": "The employee handbook mentions the types of leave and the answer should count only leave types explicitly stated in that document.",
+    "expected_documents": ["02_employee_handbook.pdf"],
+    "expected_answer_keywords": ["leave"]
+  },
+  {
+    "id": "eval_002",
+    "question": "What are the leave types described in the employee handbook?",
+    "reference": "The answer should list the leave types explicitly described in the employee handbook and cite the relevant page.",
+    "expected_documents": ["02_employee_handbook.pdf"],
+    "expected_answer_keywords": ["leave"]
+  },
+  {
+    "id": "eval_003",
+    "question": "Summarize the employee handbook policy.",
+    "reference": "The answer should summarize only the employee handbook content, not the API documentation or quarterly report.",
+    "expected_documents": ["02_employee_handbook.pdf"],
+    "expected_answer_keywords": ["employee", "policy"]
+  },
+  {
+    "id": "eval_004",
+    "question": "What authentication method does the API documentation mention?",
+    "reference": "The answer should state the authentication method described in the API documentation and cite the API documentation page.",
+    "expected_documents": ["03_api_documentation.pdf"],
+    "expected_answer_keywords": ["auth", "authentication", "api"]
+  },
+  {
+    "id": "eval_005",
+    "question": "List all API endpoints mentioned in the documentation.",
+    "reference": "The answer should list only endpoints explicitly present in the API documentation.",
+    "expected_documents": ["03_api_documentation.pdf"],
+    "expected_answer_keywords": ["endpoint", "api"]
+  },
+  {
+    "id": "eval_006",
+    "question": "What error handling guidance is provided for the API?",
+    "reference": "The answer should describe only the error handling guidance found in the API documentation.",
+    "expected_documents": ["03_api_documentation.pdf"],
+    "expected_answer_keywords": ["error", "api"]
+  },
+  {
+    "id": "eval_007",
+    "question": "What does the quarterly report say about revenue?",
+    "reference": "The answer should summarize the revenue information in the quarterly report and cite the source page.",
+    "expected_documents": ["01_quarterly_report.pdf"],
+    "expected_answer_keywords": ["revenue"]
+  },
+  {
+    "id": "eval_008",
+    "question": "What expenses are mentioned in the quarterly report?",
+    "reference": "The answer should identify expenses explicitly stated in the quarterly report.",
+    "expected_documents": ["01_quarterly_report.pdf"],
+    "expected_answer_keywords": ["expense", "expenses"]
+  },
+  {
+    "id": "eval_009",
+    "question": "Summarize the key points from the quarterly report.",
+    "reference": "The answer should provide a broad summary of the quarterly report only.",
+    "expected_documents": ["01_quarterly_report.pdf"],
+    "expected_answer_keywords": ["quarterly", "report"]
+  },
+  {
+    "id": "eval_010",
+    "question": "Compare the employee handbook and API documentation.",
+    "reference": "The answer should compare only the handbook and API documentation, keeping their topics separate.",
+    "expected_documents": ["02_employee_handbook.pdf", "03_api_documentation.pdf"],
+    "expected_answer_keywords": ["employee", "api"]
+  },
+  {
+    "id": "eval_011",
+    "question": "Summarize all uploaded documents.",
+    "reference": "The answer should summarize each uploaded document separately and cite sources for each.",
+    "expected_documents": ["01_quarterly_report.pdf", "02_employee_handbook.pdf", "03_api_documentation.pdf"],
+    "expected_answer_keywords": ["quarterly", "employee", "api"]
+  },
+  {
+    "id": "eval_012",
+    "question": "Which document discusses employee leave?",
+    "reference": "The answer should identify the employee handbook as the document discussing employee leave.",
+    "expected_documents": ["02_employee_handbook.pdf"],
+    "expected_answer_keywords": ["employee", "handbook", "leave"]
+  },
+  {
+    "id": "eval_013",
+    "question": "Which document discusses API endpoints?",
+    "reference": "The answer should identify the API documentation as the document discussing API endpoints.",
+    "expected_documents": ["03_api_documentation.pdf"],
+    "expected_answer_keywords": ["api", "endpoint"]
+  },
+  {
+    "id": "eval_014",
+    "question": "Which document discusses quarterly business performance?",
+    "reference": "The answer should identify the quarterly report as the document discussing business performance.",
+    "expected_documents": ["01_quarterly_report.pdf"],
+    "expected_answer_keywords": ["quarterly", "report"]
+  },
+  {
+    "id": "eval_015",
+    "question": "List all documents and the main topic of each.",
+    "reference": "The answer should list every uploaded document with its main topic: quarterly report, employee handbook, and API documentation.",
+    "expected_documents": ["01_quarterly_report.pdf", "02_employee_handbook.pdf", "03_api_documentation.pdf"],
+    "expected_answer_keywords": ["quarterly", "employee", "api"]
+  }
+]

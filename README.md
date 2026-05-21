@@ -96,6 +96,38 @@ EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 Tests use fake embeddings and a fake LLM client, so they do not require Groq or model downloads.
 
+## Evaluation
+
+Manual RAGAS evaluation lives in `evals/`:
+
+- `evals/manual_eval_set.json` contains 15 manual eval questions and references.
+- `evals/run_eval.py` runs the actual RAG pipeline, saves JSON logs, runs RAGAS, and adds custom retrieval metrics.
+- `evals/outputs/` is ignored by git.
+
+Run RAG logs and custom metrics only:
+
+```powershell
+.\.venv\Scripts\python.exe evals\run_eval.py --docs <doc1.pdf> <doc2.pdf> <doc3.pdf> --skip-ragas
+```
+
+Run full RAGAS:
+
+```powershell
+$env:GROQ_API_KEY="your_groq_key_here"
+.\.venv\Scripts\python.exe evals\run_eval.py --docs <doc1.pdf> <doc2.pdf> <doc3.pdf>
+```
+
+Full RAGAS uses Groq as the judge LLM and local `sentence-transformers` embeddings by default, so an OpenAI key is not required.
+
+| Metric | What It Evaluates | Target |
+| --- | --- | --- |
+| Faithfulness | Whether Agent 4B hallucinated | > 0.85 |
+| Response Relevancy | Whether answer addresses question | > 0.80 |
+| Context Precision | Whether retrieved chunks were relevant | > 0.75 |
+| Context Recall | Whether required evidence was retrieved | > 0.75 |
+| Retrieval Hit Rate | Whether expected document was retrieved | > 0.90 |
+| Avg Retrieved Docs | Whether retrieval is noisy | Lower is better |
+
 ## Design Decisions
 
 - Retrieval and response generation are split into `RetrievalAgent` and `ConversationAgent`. Each class has one reason to change, which keeps the chat pipeline closer to SOLID principles.

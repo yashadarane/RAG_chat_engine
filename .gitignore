@@ -25,6 +25,7 @@ ENV/
 uploads/
 data/
 vector_store/
+evals/outputs/
 *.log
 
 # OS/editor noise
@@ -35,3 +36,4 @@ Thumbs.db
 
 .docx
 models/
+evals/outputs/

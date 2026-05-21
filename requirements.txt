@@ -6,3 +6,7 @@ easyocr>=1.7
 sentence-transformers>=5.5
 chromadb>=1.5
 pytest>=8.0
+ragas
+datasets
+langchain-openai
+openai
