@@ -31,6 +31,8 @@ Production-oriented prototype for the Allianz intern chat-engine assignment. The
 |   |-- ports.py
 |   |-- vector_store.py
 |   |-- llm_client.py
+|   |-- query_rewriter.py
+|   |-- reranker.py
 |   `-- prompts.py
 |-- utils/
 |   |-- file_utils.py
@@ -65,6 +67,7 @@ Optional Groq overrides:
 $env:GROQ_MODEL="llama-3.3-70b-versatile"
 $env:GROQ_API_BASE_URL="https://api.groq.com/openai/v1"
 $env:GROQ_TIMEOUT_SECONDS="120"
+$env:ENABLE_CROSS_ENCODER_RERANKER="false"
 ```
 
 If you manually downloaded the embedding model, place it at:
@@ -101,6 +104,10 @@ Tests use fake embeddings and a fake LLM client, so they do not require Groq or 
   - `focused` for direct factual questions.
   - `broad` for summaries, explanations, comparisons, and many-point questions.
   - `exhaustive` for counts, totals, complete lists, and questions containing "all" or similar completeness language.
+- Focused retrieval uses LLM query rewriting, dense Chroma search, BM25-style keyword search, candidate deduplication, and reranking.
+- Broad and exhaustive retrieval use all indexed chunks for this assignment size limit, avoiding top-k loss for summaries, counts, totals, and complete lists.
+- `ChromaVectorStore` exposes `search()`, `keyword_search()`, and `get_all()` through the vector store port.
+- Cross-encoder reranking can be enabled with `ENABLE_CROSS_ENCODER_RERANKER=true`; otherwise the app uses a lightweight score reranker.
 - `GroqLLMClient` is an adapter around Groq's OpenAI-compatible Chat Completions endpoint. It uses the standard library HTTP client to avoid another runtime dependency.
 - Agent handoffs use typed dataclasses in `core/schemas.py`, giving each stage a clear input/output contract.
 - Retrieval is grounded by design: if no chunk passes the similarity threshold, the app returns a clear not-found response.

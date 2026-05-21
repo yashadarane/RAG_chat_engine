@@ -89,11 +89,41 @@ def test_retrieval_agent_selects_modes() -> None:
         def search(self, query: str, top_k: int, min_similarity: float):
             return []
 
+        def keyword_search(self, query: str, top_k: int):
+            return []
+
+        def get_all(self):
+            return []
+
     agent = RetrievalAgent(EmptyStore())
 
     assert agent.retrieve("What is the deductible?").mode is RetrievalMode.FOCUSED
     assert agent.retrieve("Summarize the main points").mode is RetrievalMode.BROAD
     assert agent.retrieve("List all exclusions and count them").mode is RetrievalMode.EXHAUSTIVE
+
+
+def test_query_rewriter_variants_are_deduplicated() -> None:
+    class EmptyStore:
+        def search(self, query: str, top_k: int, min_similarity: float):
+            return []
+
+        def keyword_search(self, query: str, top_k: int):
+            return []
+
+        def get_all(self):
+            return []
+
+    class FakeRewriter:
+        def rewrite(self, query: str) -> list[str]:
+            return [query, "waiting period", "claim delay", "waiting period"]
+
+    agent = RetrievalAgent(EmptyStore(), query_rewriter=FakeRewriter())
+
+    assert agent._get_query_variants("What is the waiting period?") == [
+        "What is the waiting period?",
+        "waiting period",
+        "claim delay",
+    ]
 
 
 def test_transcript_exports_text_and_pdf() -> None:

@@ -17,3 +17,23 @@ class VectorSearchStore(Protocol):
 
     def search(self, query: str, top_k: int, min_similarity: float) -> list[SearchMatch]:
         """Return ranked chunks above the relevance threshold."""
+
+    def keyword_search(self, query: str, top_k: int) -> list[SearchMatch]:
+        """Return keyword/BM25 candidates."""
+
+    def get_all(self) -> list[SearchMatch]:
+        """Return all indexed chunks for exhaustive tasks."""
+
+
+class QueryRewriter(Protocol):
+    """Boundary for query rewriting strategies."""
+
+    def rewrite(self, query: str) -> list[str]:
+        """Return query variants that preserve the user's intent."""
+
+
+class Reranker(Protocol):
+    """Boundary for candidate reranking strategies."""
+
+    def rerank(self, query: str, matches: list[SearchMatch], top_k: int) -> list[SearchMatch]:
+        """Return the highest relevance matches for the original query."""

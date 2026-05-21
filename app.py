@@ -12,6 +12,8 @@ from agents import (
     TextExtractionAgent,
 )
 from core.config import GROQ_MODEL, ensure_data_dirs
+from core.query_rewriter import LLMQueryRewriter
+from core.reranker import build_default_reranker
 from core.schemas import ChatTurn, RagOutput
 from utils.transcript_export import conversation_to_pdf, conversation_to_text
 
@@ -116,7 +118,11 @@ def render_chat() -> None:
         st.chat_message("assistant").write("Upload and index documents first, then ask me about them.")
         return
 
-    retrieval_agent = RetrievalAgent(vector_store=vector_store)
+    retrieval_agent = RetrievalAgent(
+        vector_store=vector_store,
+        query_rewriter=LLMQueryRewriter(),
+        reranker=build_default_reranker(),
+    )
     conversation_agent = ConversationAgent()
     message_container = st.container()
     export_container = st.container()
