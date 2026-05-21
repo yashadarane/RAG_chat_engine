@@ -72,11 +72,12 @@ class IndexingOutput:
 @dataclass(frozen=True)
 class SearchMatch:
     chunk: TextChunk
-    similarity_score: float
+    similarity_score: float | None
+    retrieval_reason: str = "semantic_match"
 
     @property
     def score(self) -> float:
-        return self.similarity_score
+        return self.similarity_score or 0.0
 
 
 @dataclass(frozen=True)
@@ -84,10 +85,13 @@ class Source:
     document: str
     page: int
     chunk_id: str
-    similarity_score: float
+    similarity_score: float | None
+    retrieval_reason: str = "semantic_match"
 
     @property
     def label(self) -> str:
+        if self.similarity_score is None:
+            return f"{self.document}, page {self.page} ({self.retrieval_reason})"
         return f"{self.document}, page {self.page} ({self.similarity_score:.2f})"
 
 
@@ -97,9 +101,16 @@ class RetrievalMode(str, Enum):
     EXHAUSTIVE = "exhaustive"
 
 
+class RetrievalScope(str, Enum):
+    SELECTED_DOCUMENTS = "selected_documents"
+    ALL_DOCUMENTS = "all_documents"
+
+
 @dataclass(frozen=True)
 class RetrievalOutput:
     mode: RetrievalMode
+    scope: RetrievalScope
+    selected_documents: list[str]
     matches: list[SearchMatch]
     sources: list[Source]
 
@@ -117,3 +128,5 @@ class RagOutput:
     prompt: str
     matches: list[SearchMatch]
     retrieval_mode: RetrievalMode = RetrievalMode.FOCUSED
+    retrieval_scope: RetrievalScope = RetrievalScope.SELECTED_DOCUMENTS
+    selected_documents: list[str] = field(default_factory=list)

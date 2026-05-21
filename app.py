@@ -152,6 +152,9 @@ def render_chat() -> None:
 
 def render_retrieval_transparency(response: RagOutput) -> None:
     st.write(f"**Agent 4A retrieval mode:** `{response.retrieval_mode.value}`")
+    st.write(f"**Agent 4A document scope:** `{response.retrieval_scope.value}`")
+    if response.selected_documents:
+        st.write("**Selected documents:** " + ", ".join(response.selected_documents))
     st.write("**Agent 4B output**")
     st.code(
         json.dumps(
@@ -162,7 +165,12 @@ def render_retrieval_transparency(response: RagOutput) -> None:
                         "document": source.document,
                         "page": source.page,
                         "chunk_id": source.chunk_id,
-                        "similarity_score": round(source.similarity_score, 3),
+                        "similarity_score": (
+                            round(source.similarity_score, 3)
+                            if source.similarity_score is not None
+                            else None
+                        ),
+                        "retrieval_reason": source.retrieval_reason,
                     }
                     for source in response.sources
                 ],
@@ -175,7 +183,8 @@ def render_retrieval_transparency(response: RagOutput) -> None:
     st.code(response.prompt, language="text")
     st.write("**Agent 4A retrieved chunks**")
     for match in response.matches:
-        st.markdown(f"- `{match.similarity_score:.3f}` {match.chunk.source_label}")
+        score = "complete_context" if match.similarity_score is None else f"{match.similarity_score:.3f}"
+        st.markdown(f"- `{score}` {match.chunk.source_label} ({match.retrieval_reason})")
 
 
 def render_conversation_exports() -> None:

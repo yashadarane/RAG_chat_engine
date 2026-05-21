@@ -1,12 +1,23 @@
 from pathlib import Path
 
 from agents import ChunkingEmbeddingAgent, ConversationAgent, DocumentIngestionAgent, RetrievalAgent
-from core.schemas import ChatTurn, ExtractedDocument, ExtractedPage, RetrievalMode
+from core.schemas import ChatTurn, ExtractedDocument, ExtractedPage, RetrievalMode, RetrievalScope
 from utils.transcript_export import conversation_to_pdf, conversation_to_text
 
 
 class FakeEmbeddings:
-    terms = ["claims", "waiting", "period", "dental", "coverage", "car", "premium"]
+    terms = [
+        "claims",
+        "waiting",
+        "period",
+        "dental",
+        "coverage",
+        "car",
+        "premium",
+        "leave",
+        "api",
+        "quarterly",
+    ]
 
     def __call__(self, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
@@ -95,6 +106,9 @@ def test_retrieval_agent_selects_modes() -> None:
         def get_all(self):
             return []
 
+        def get_by_filenames(self, filenames: list[str]):
+            return []
+
     agent = RetrievalAgent(EmptyStore())
 
     assert agent.retrieve("What is the deductible?").mode is RetrievalMode.FOCUSED
@@ -111,6 +125,9 @@ def test_query_rewriter_variants_are_deduplicated() -> None:
             return []
 
         def get_all(self):
+            return []
+
+        def get_by_filenames(self, filenames: list[str]):
             return []
 
     class FakeRewriter:
@@ -138,3 +155,66 @@ def test_transcript_exports_text_and_pdf() -> None:
     assert "USER:" in text
     assert "ASSISTANT:" in text
     assert pdf.startswith(b"%PDF-1.4")
+
+
+def test_exhaustive_retrieval_uses_selected_document_scope() -> None:
+    documents = [
+        ExtractedDocument(
+            doc_id="doc_1",
+            filename="01_quarterly_report.pdf",
+            file_type="pdf",
+            pages=[ExtractedPage(page_number=1, text="The quarterly report covers revenue and expenses.")],
+        ),
+        ExtractedDocument(
+            doc_id="doc_2",
+            filename="02_employee_handbook.pdf",
+            file_type="pdf",
+            pages=[ExtractedPage(page_number=1, text="Annual leave and sick leave are mentioned.")],
+        ),
+        ExtractedDocument(
+            doc_id="doc_3",
+            filename="03_api_documentation.pdf",
+            file_type="pdf",
+            pages=[ExtractedPage(page_number=1, text="The API documentation describes endpoints.")],
+        ),
+    ]
+    store, _ = ChunkingEmbeddingAgent(
+        chunk_words=80,
+        overlap_words=10,
+        embedding_function=FakeEmbeddings(),
+    ).index("testscope", documents)
+
+    retrieval = RetrievalAgent(store).retrieve("How many types of leave are mentioned?")
+
+    assert retrieval.mode is RetrievalMode.EXHAUSTIVE
+    assert retrieval.scope is RetrievalScope.SELECTED_DOCUMENTS
+    assert retrieval.selected_documents == ["02_employee_handbook.pdf"]
+    assert {match.chunk.filename for match in retrieval.matches} == {"02_employee_handbook.pdf"}
+    assert all(match.similarity_score is None for match in retrieval.matches)
+
+
+def test_explicit_all_documents_scope_fetches_everything() -> None:
+    documents = [
+        ExtractedDocument(
+            doc_id="doc_1",
+            filename="01_quarterly_report.pdf",
+            file_type="pdf",
+            pages=[ExtractedPage(page_number=1, text="Quarterly report.")],
+        ),
+        ExtractedDocument(
+            doc_id="doc_2",
+            filename="02_employee_handbook.pdf",
+            file_type="pdf",
+            pages=[ExtractedPage(page_number=1, text="Employee handbook.")],
+        ),
+    ]
+    store, _ = ChunkingEmbeddingAgent(
+        chunk_words=80,
+        overlap_words=10,
+        embedding_function=FakeEmbeddings(),
+    ).index("testallscope", documents)
+
+    retrieval = RetrievalAgent(store).retrieve("Summarize all documents")
+
+    assert retrieval.scope is RetrievalScope.ALL_DOCUMENTS
+    assert set(retrieval.selected_documents) == {"01_quarterly_report.pdf", "02_employee_handbook.pdf"}

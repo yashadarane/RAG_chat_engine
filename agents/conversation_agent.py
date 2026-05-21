@@ -27,6 +27,8 @@ class ConversationAgent:
                 prompt=prompt,
                 matches=[],
                 retrieval_mode=retrieval.mode,
+                retrieval_scope=retrieval.scope,
+                selected_documents=retrieval.selected_documents,
             )
 
         try:
@@ -43,4 +45,6 @@ class ConversationAgent:
             prompt=prompt,
             matches=retrieval.matches,
             retrieval_mode=retrieval.mode,
+            retrieval_scope=retrieval.scope,
+            selected_documents=retrieval.selected_documents,
         )

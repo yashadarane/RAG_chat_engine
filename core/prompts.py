@@ -136,7 +136,9 @@ def build_grounded_prompt(
 ) -> str:
     context = "\n\n".join(
         f"[{idx}] {match.chunk.source_label}, chunk {match.chunk.chunk_id}, "
-        f"similarity {match.similarity_score:.3f}\n{match.chunk.text}"
+        f"retrieval_reason {match.retrieval_reason}, "
+        f"score {match.similarity_score if match.similarity_score is not None else 'not_scored'}\n"
+        f"{match.chunk.text}"
         for idx, match in enumerate(matches, start=1)
     )
     turns = "\n".join(f"{turn.role}: {turn.content}" for turn in history[-6:])

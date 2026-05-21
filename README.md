@@ -104,8 +104,11 @@ Tests use fake embeddings and a fake LLM client, so they do not require Groq or 
   - `focused` for direct factual questions.
   - `broad` for summaries, explanations, comparisons, and many-point questions.
   - `exhaustive` for counts, totals, complete lists, and questions containing "all" or similar completeness language.
+- Retrieval mode and document scope are separate decisions. Mode controls evidence depth; scope controls which document set is eligible.
+- Exhaustive retrieval now fetches complete context from selected relevant documents, not blindly from every uploaded document.
+- All-document retrieval is used only when the user explicitly asks for all uploaded documents, every document, or a cross-document comparison/summary.
 - Focused retrieval uses LLM query rewriting, dense Chroma search, BM25-style keyword search, candidate deduplication, and reranking.
-- Broad and exhaustive retrieval use all indexed chunks for this assignment size limit, avoiding top-k loss for summaries, counts, totals, and complete lists.
+- Broad and exhaustive retrieval use all chunks from the selected document scope, avoiding top-k loss for summaries, counts, totals, and complete lists.
 - `ChromaVectorStore` exposes `search()`, `keyword_search()`, and `get_all()` through the vector store port.
 - Cross-encoder reranking can be enabled with `ENABLE_CROSS_ENCODER_RERANKER=true`; otherwise the app uses a lightweight score reranker.
 - `GroqLLMClient` is an adapter around Groq's OpenAI-compatible Chat Completions endpoint. It uses the standard library HTTP client to avoid another runtime dependency.

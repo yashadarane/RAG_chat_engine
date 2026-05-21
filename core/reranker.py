@@ -9,7 +9,7 @@ class ScoreReranker:
     """Fallback reranker that orders candidates by the score already attached to them."""
 
     def rerank(self, query: str, matches: list[SearchMatch], top_k: int) -> list[SearchMatch]:
-        return sorted(matches, key=lambda match: match.similarity_score, reverse=True)[:top_k]
+        return sorted(matches, key=lambda match: match.score, reverse=True)[:top_k]
 
 
 class CrossEncoderReranker:

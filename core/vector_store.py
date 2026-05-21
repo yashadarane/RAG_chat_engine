@@ -91,7 +91,7 @@ class ChromaVectorStore:
                 page_number=int(metadata["page_number"]),
                 text=str(text),
             )
-            matches.append(SearchMatch(chunk=chunk, similarity_score=similarity))
+            matches.append(SearchMatch(chunk=chunk, similarity_score=similarity, retrieval_reason="semantic_match"))
         return matches
 
     def keyword_search(self, query: str, top_k: int) -> list[SearchMatch]:
@@ -100,7 +100,18 @@ class ChromaVectorStore:
         return self.keyword_index.search(query, top_k)
 
     def get_all(self) -> list[SearchMatch]:
-        return [SearchMatch(chunk=chunk, similarity_score=1.0) for chunk in self.chunks]
+        return [
+            SearchMatch(chunk=chunk, similarity_score=None, retrieval_reason="complete_context")
+            for chunk in self.chunks
+        ]
+
+    def get_by_filenames(self, filenames: list[str]) -> list[SearchMatch]:
+        selected = set(filenames)
+        return [
+            SearchMatch(chunk=chunk, similarity_score=None, retrieval_reason="complete_context")
+            for chunk in self.chunks
+            if chunk.filename in selected
+        ]
 
 
 class BM25Index:
@@ -132,7 +143,13 @@ class BM25Index:
         for chunk, score in ranked[:top_k]:
             if score <= 0:
                 continue
-            matches.append(SearchMatch(chunk=chunk, similarity_score=float(score / max_score)))
+            matches.append(
+                SearchMatch(
+                    chunk=chunk,
+                    similarity_score=float(score / max_score),
+                    retrieval_reason="keyword_match",
+                )
+            )
         return matches
 
     def _score(self, query_terms: list[str], doc_index: int) -> float:

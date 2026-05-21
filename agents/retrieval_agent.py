@@ -6,7 +6,7 @@ from collections import OrderedDict
 from core.config import MIN_SIMILARITY, TOP_K
 from core.ports import QueryRewriter, Reranker, VectorSearchStore
 from core.reranker import ScoreReranker
-from core.schemas import RetrievalMode, RetrievalOutput, SearchMatch, Source
+from core.schemas import RetrievalMode, RetrievalOutput, RetrievalScope, SearchMatch, Source
 
 
 class RetrievalAgent:
@@ -28,13 +28,20 @@ class RetrievalAgent:
 
     def retrieve(self, query: str) -> RetrievalOutput:
         mode = self.select_mode(query)
+        scope, selected_documents = self.select_scope(query)
         if mode is RetrievalMode.FOCUSED:
             matches = self._retrieve_focused(query)
         elif mode is RetrievalMode.BROAD:
-            matches = self._retrieve_broad(query)
+            matches = self._retrieve_broad(query, scope, selected_documents)
         else:
-            matches = self._retrieve_exhaustive()
-        return RetrievalOutput(mode=mode, matches=matches, sources=self.build_sources(matches))
+            matches = self._retrieve_exhaustive(scope, selected_documents)
+        return RetrievalOutput(
+            mode=mode,
+            scope=scope,
+            selected_documents=selected_documents,
+            matches=matches,
+            sources=self.build_sources(matches),
+        )
 
     def select_mode(self, query: str) -> RetrievalMode:
         normalized = query.lower()
@@ -72,6 +79,13 @@ class RetrievalAgent:
             return RetrievalMode.BROAD
         return RetrievalMode.FOCUSED
 
+    def select_scope(self, query: str) -> tuple[RetrievalScope, list[str]]:
+        if self._requires_all_documents(query):
+            return RetrievalScope.ALL_DOCUMENTS, self._all_document_names()
+
+        selected_documents = self._select_relevant_documents(query)
+        return RetrievalScope.SELECTED_DOCUMENTS, selected_documents
+
     def _retrieve_focused(self, query: str) -> list[SearchMatch]:
         query_variants = self._get_query_variants(query)
         candidates: list[SearchMatch] = []
@@ -83,26 +97,60 @@ class RetrievalAgent:
         deduped = self.merge_and_deduplicate(candidates)
         return self.rerank(query, deduped, self.top_k)
 
-    def _retrieve_broad(self, query: str) -> list[SearchMatch]:
-        all_matches = self.vector_store.get_all()
-        if all_matches:
-            return all_matches
+    def _retrieve_broad(
+        self,
+        query: str,
+        scope: RetrievalScope,
+        selected_documents: list[str],
+    ) -> list[SearchMatch]:
+        if scope is RetrievalScope.ALL_DOCUMENTS:
+            return self.vector_store.get_all()
+        if selected_documents:
+            return self.vector_store.get_by_filenames(selected_documents)
+        return []
 
-        query_variants = self._get_query_variants(query)
+    def _retrieve_exhaustive(
+        self,
+        scope: RetrievalScope,
+        selected_documents: list[str],
+    ) -> list[SearchMatch]:
+        if scope is RetrievalScope.ALL_DOCUMENTS:
+            return self.vector_store.get_all()
+        if selected_documents:
+            return self.vector_store.get_by_filenames(selected_documents)
+        return []
+
+    def _select_relevant_documents(self, query: str) -> list[str]:
         candidates: list[SearchMatch] = []
-        for variant in query_variants:
+        for variant in self._get_query_variants(query):
             candidates.extend(
-                self.retrieve_dense(
-                    variant,
-                    top_k=max(self.top_k * 4, 20),
-                    min_similarity=max(self.min_similarity * 0.5, 0.05),
+                self.vector_store.search(
+                    query=variant,
+                    top_k=max(self.top_k * 3, 12),
+                    min_similarity=max(self.min_similarity * 0.5, 0.10),
                 )
             )
-            candidates.extend(self.retrieve_sparse(variant, top_k=max(self.top_k * 4, 20)))
-        return self.merge_and_deduplicate(candidates)
+            candidates.extend(self.vector_store.keyword_search(query=variant, top_k=max(self.top_k * 3, 12)))
 
-    def _retrieve_exhaustive(self) -> list[SearchMatch]:
-        return self.vector_store.get_all()
+        candidates = self.merge_and_deduplicate(candidates)
+        if not candidates:
+            return []
+
+        doc_scores: dict[str, float] = {}
+        for match in candidates:
+            filename = match.chunk.filename
+            doc_scores[filename] = max(doc_scores.get(filename, 0.0), match.score)
+
+        ranked = sorted(doc_scores.items(), key=lambda item: item[1], reverse=True)
+        if not ranked:
+            return []
+
+        top_score = ranked[0][1]
+        if top_score <= 0:
+            return []
+
+        selected = [filename for filename, score in ranked if score >= top_score * 0.90]
+        return selected
 
     def _get_query_variants(self, query: str) -> list[str]:
         if not self.query_rewriter:
@@ -147,6 +195,35 @@ class RetrievalAgent:
     def rerank(self, query: str, matches: list[SearchMatch], top_k: int) -> list[SearchMatch]:
         return self.reranker.rerank(query, matches, top_k)
 
+    def _requires_all_documents(self, query: str) -> bool:
+        return self._contains_any(
+            query.lower(),
+            {
+                "all documents",
+                "all uploaded documents",
+                "all files",
+                "all uploaded files",
+                "all three documents",
+                "three documents",
+                "each document",
+                "every document",
+                "compare documents",
+                "compare all",
+                "summarize all",
+                "across all documents",
+            },
+        )
+
+    def _all_document_names(self) -> list[str]:
+        seen: set[str] = set()
+        names: list[str] = []
+        for match in self.vector_store.get_all():
+            filename = match.chunk.filename
+            if filename not in seen:
+                seen.add(filename)
+                names.append(filename)
+        return names
+
     def build_sources(self, matches: list[SearchMatch]) -> list[Source]:
         seen: set[tuple[str, int, str]] = set()
         sources: list[Source] = []
@@ -161,6 +238,7 @@ class RetrievalAgent:
                     page=match.chunk.page_number,
                     chunk_id=match.chunk.chunk_id,
                     similarity_score=match.similarity_score,
+                    retrieval_reason=match.retrieval_reason,
                 )
             )
         return sources

@@ -24,6 +24,9 @@ class VectorSearchStore(Protocol):
     def get_all(self) -> list[SearchMatch]:
         """Return all indexed chunks for exhaustive tasks."""
 
+    def get_by_filenames(self, filenames: list[str]) -> list[SearchMatch]:
+        """Return all chunks belonging to the selected documents."""
+
 
 class QueryRewriter(Protocol):
     """Boundary for query rewriting strategies."""
