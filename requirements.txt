@@ -10,3 +10,5 @@ ragas
 datasets
 langchain-openai
 openai
+langgraph
+python-dotenv

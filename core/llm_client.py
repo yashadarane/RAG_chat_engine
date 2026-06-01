@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from core.config import GROQ_API_BASE_URL, GROQ_MODEL, GROQ_TIMEOUT_SECONDS
+from core.config import (
+    GROQ_API_BASE_URL,
+    GROQ_MAX_RETRIES,
+    GROQ_MODEL,
+    GROQ_RETRY_BASE_SECONDS,
+    GROQ_TIMEOUT_SECONDS,
+)
 
 
 class LLMConfigurationError(RuntimeError):
@@ -24,19 +32,37 @@ class GroqClientConfig:
     model: str = GROQ_MODEL
     base_url: str = GROQ_API_BASE_URL
     timeout_seconds: int = GROQ_TIMEOUT_SECONDS
+    max_retries: int = GROQ_MAX_RETRIES
+    retry_base_seconds: float = GROQ_RETRY_BASE_SECONDS
 
 
 class JsonHttpTransport(Protocol):
     """Small HTTP boundary so the provider client is easy to test or replace."""
 
-    def post_json(self, url: str, payload: dict[str, Any], headers: dict[str, str], timeout: int) -> dict[str, Any]:
+    def post_json(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        timeout: int,
+        max_retries: int,
+        retry_base_seconds: float,
+    ) -> dict[str, Any]:
         """POST JSON and return a decoded JSON object."""
 
 
 class UrllibJsonHttpTransport:
     """Standard-library HTTP transport used to avoid an extra runtime dependency."""
 
-    def post_json(self, url: str, payload: dict[str, Any], headers: dict[str, str], timeout: int) -> dict[str, Any]:
+    def post_json(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        timeout: int,
+        max_retries: int,
+        retry_base_seconds: float,
+    ) -> dict[str, Any]:
         request = Request(
             url=url,
             data=json.dumps(payload).encode("utf-8"),
@@ -44,23 +70,35 @@ class UrllibJsonHttpTransport:
             method="POST",
         )
 
-        try:
-            with urlopen(request, timeout=timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            detail = extract_error_detail(body)
-            if exc.code == 403 and "1010" in body:
-                detail = (
-                    f"{detail}. Groq's edge rejected the request before normal API handling. "
-                    "Confirm your network/VPN is allowed by Groq, then retry. If it persists, "
-                    "install Groq's official SDK and swap this transport."
-                )
-            raise LLMProviderError(f"Groq API request failed with HTTP {exc.code}: {detail}") from exc
-        except URLError as exc:
-            raise LLMProviderError(f"Could not reach Groq API: {exc.reason}") from exc
-        except TimeoutError as exc:
-            raise LLMProviderError("Groq API request timed out.") from exc
+        for attempt in range(max_retries + 1):
+            try:
+                with urlopen(request, timeout=timeout) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except HTTPError as exc:
+                body = exc.read().decode("utf-8", errors="replace")
+                if exc.code == 429 and attempt < max_retries:
+                    time.sleep(retry_delay_seconds(body, attempt, retry_base_seconds))
+                    continue
+                detail = extract_error_detail(body)
+                if exc.code == 403 and "1010" in body:
+                    detail = (
+                        f"{detail}. Groq's edge rejected the request before normal API handling. "
+                        "Confirm your network/VPN is allowed by Groq, then retry. If it persists, "
+                        "install Groq's official SDK and swap this transport."
+                    )
+                raise LLMProviderError(f"Groq API request failed with HTTP {exc.code}: {detail}") from exc
+            except URLError as exc:
+                if attempt < max_retries:
+                    time.sleep(retry_base_seconds * (attempt + 1))
+                    continue
+                raise LLMProviderError(f"Could not reach Groq API: {exc.reason}") from exc
+            except TimeoutError as exc:
+                if attempt < max_retries:
+                    time.sleep(retry_base_seconds * (attempt + 1))
+                    continue
+                raise LLMProviderError("Groq API request timed out.") from exc
+
+        raise LLMProviderError("Groq API request failed after retries.")
 
 
 class GroqLLMClient:
@@ -105,6 +143,8 @@ class GroqLLMClient:
                 "User-Agent": "rag-chat-engine/1.0",
             },
             timeout=self.config.timeout_seconds,
+            max_retries=self.config.max_retries,
+            retry_base_seconds=self.config.retry_base_seconds,
         )
 
 
@@ -129,3 +169,10 @@ def extract_error_detail(body: str) -> str:
         message = error.get("message") or error.get("code") or error
         return str(message)
     return str(error or parsed)
+
+
+def retry_delay_seconds(body: str, attempt: int, retry_base_seconds: float) -> float:
+    match = re.search(r"try again in ([0-9.]+)s", body, flags=re.IGNORECASE)
+    if match:
+        return float(match.group(1)) + 0.5
+    return retry_base_seconds * (2**attempt)

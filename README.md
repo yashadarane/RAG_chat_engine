@@ -12,7 +12,8 @@ Production-oriented prototype for the Allianz intern chat-engine assignment. The
 | Embeddings | `sentence-transformers/all-MiniLM-L6-v2` | Lightweight semantic embedding model suitable for local MVP RAG. |
 | Vector DB | ChromaDB | Local persistent collections with chunk metadata and similarity search. |
 | LLM | Groq Chat Completions API | Fast hosted LLM inference using `GROQ_API_KEY`. |
-| Orchestration | Plain Python OOP | Keeps agent responsibilities explicit, typed, and testable. |
+| Agents | Plain Python classes | Keeps agent responsibilities explicit, typed, and testable. |
+| Graph orchestration | LangGraph | Coordinates document processing and question answering as explicit pipeline graphs. |
 
 ## Project Structure
 
@@ -33,6 +34,7 @@ Production-oriented prototype for the Allianz intern chat-engine assignment. The
 |   |-- llm_client.py
 |   |-- query_rewriter.py
 |   |-- reranker.py
+|   |-- graph_orchestration.py
 |   `-- prompts.py
 |-- utils/
 |   |-- file_utils.py
@@ -60,6 +62,14 @@ Set your Groq API key in the same terminal:
 ```powershell
 $env:GROQ_API_KEY="your_groq_key_here"
 ```
+
+Alternatively, create a `.env` file in the project root:
+
+```text
+GROQ_API_KEY=your_groq_key_here
+```
+
+The app loads `.env` automatically at startup. If Streamlit was already running before you set or changed the key, stop it and start it again so the process sees the updated environment.
 
 Optional Groq overrides:
 
@@ -96,6 +106,70 @@ EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 Tests use fake embeddings and a fake LLM client, so they do not require Groq or model downloads.
 
+## Agent Flow and State Management
+
+Agent flow is coordinated in `core/graph_orchestration.py` using two LangGraph state graphs.
+
+Upload/indexing graph:
+
+```text
+upload_received
+  |
+  v
+ingest -> extract -> index -> END
+```
+
+Query graph:
+
+```text
+question_received
+  |
+  v
+retrieve -> converse -> END
+```
+
+The graph state tracks both business outputs and runtime handoff metadata:
+
+```python
+DocumentPipelineState = {
+    "doc_paths": list[Path],
+    "ingestion": IngestionOutput,
+    "extraction": ExtractionOutput,
+    "indexing": IndexingOutput,
+    "vector_store": ChromaVectorStore,
+    "current_step": str,
+    "completed_steps": list[str],
+    "agent_steps": list[dict],
+    "errors": list[str],
+}
+
+QueryPipelineState = {
+    "query": str,
+    "history": list[ChatTurn],
+    "vector_store": ChromaVectorStore,
+    "retrieval": RetrievalOutput,
+    "response": RagOutput,
+    "current_step": str,
+    "completed_steps": list[str],
+    "agent_steps": list[dict],
+    "errors": list[str],
+}
+```
+
+Each graph node calls exactly one agent and appends a handoff record with the step name, agent name, status, and summary message. If a node fails, the error is stored in `errors` and the graph stops before downstream agents run on incomplete state.
+
+Streamlit stores only session-level state needed by the UI:
+
+- `vector_store`
+- `pipeline_report`
+- `chat_history`
+- `latest_question`
+- `latest_response`
+- `latest_query_state`
+- `live_ragas_result`
+
+The internal graph state is shown in the app under the existing agent handoff and retrieval transparency expanders.
+
 ## Evaluation
 
 Manual RAGAS evaluation lives in `evals/`:
@@ -118,6 +192,16 @@ $env:GROQ_API_KEY="your_groq_key_here"
 ```
 
 Full RAGAS uses Groq as the judge LLM and local `sentence-transformers` embeddings by default, so an OpenAI key is not required.
+The eval runner resets conversation memory for each question, retries Groq 429s, batches RAGAS calls, skips failed generations from RAGAS scoring, and writes JSON-safe `null` instead of `NaN`.
+
+Useful rate-limit controls:
+
+```powershell
+.\.venv\Scripts\python.exe evals\run_eval.py --docs <doc1.pdf> <doc2.pdf> <doc3.pdf> `
+  --rag-delay-seconds 10 `
+  --ragas-batch-size 1 `
+  --ragas-delay-seconds 30
+```
 
 | Metric | What It Evaluates | Target |
 | --- | --- | --- |
@@ -145,9 +229,12 @@ Full RAGAS uses Groq as the judge LLM and local `sentence-transformers` embeddin
 - Cross-encoder reranking can be enabled with `ENABLE_CROSS_ENCODER_RERANKER=true`; otherwise the app uses a lightweight score reranker.
 - `GroqLLMClient` is an adapter around Groq's OpenAI-compatible Chat Completions endpoint. It uses the standard library HTTP client to avoid another runtime dependency.
 - Agent handoffs use typed dataclasses in `core/schemas.py`, giving each stage a clear input/output contract.
+- LangGraph state tracks `current_step`, `completed_steps`, `agent_steps`, and `errors` for each upload or query run.
+- Conditional graph edges stop the flow when an upstream agent fails, preventing downstream agents from running on incomplete state.
 - Retrieval is grounded by design: if no chunk passes the similarity threshold, the app returns a clear not-found response.
 - Groq receives only retrieved context, retrieval mode, recent chat history, and the user query, reducing token use and limiting hallucination risk.
 - Conversation export supports TXT and PDF using standard-library code, avoiding a new dependency for this feature.
+- LangGraph orchestrates the document pipeline and query pipeline while the individual agents remain independently testable.
 - Runtime data, uploaded files, local models, `.env`, and `changes.md` are ignored by git.
 
 ## Required Environment

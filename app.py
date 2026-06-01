@@ -5,15 +5,10 @@ import json
 import streamlit as st
 
 from agents import (
-    ChunkingEmbeddingAgent,
-    ConversationAgent,
     DocumentIngestionAgent,
-    RetrievalAgent,
-    TextExtractionAgent,
 )
 from core.config import GROQ_MODEL, ensure_data_dirs
-from core.query_rewriter import LLMQueryRewriter
-from core.reranker import build_default_reranker
+from core.graph_orchestration import RagGraphOrchestrator
 from core.schemas import ChatTurn, RagOutput
 from utils.transcript_export import conversation_to_pdf, conversation_to_text
 
@@ -29,24 +24,37 @@ def initialize_state() -> None:
         st.session_state.vector_store = None
     if "pipeline_report" not in st.session_state:
         st.session_state.pipeline_report = None
+    if "latest_query_state" not in st.session_state:
+        st.session_state.latest_query_state = None
+    if "latest_question" not in st.session_state:
+        st.session_state.latest_question = None
+    if "latest_response" not in st.session_state:
+        st.session_state.latest_response = None
+    if "live_ragas_result" not in st.session_state:
+        st.session_state.live_ragas_result = None
 
 
 def process_uploads(uploaded_files) -> None:
     ingestion_agent = DocumentIngestionAgent()
-    extraction_agent = TextExtractionAgent()
-    chunking_agent = ChunkingEmbeddingAgent()
-
-    ingestion = ingestion_agent.validate_uploads(uploaded_files)
-    extraction = extraction_agent.extract(ingestion.session_id, ingestion.documents)
-    vector_store, indexing = chunking_agent.index(ingestion.session_id, extraction.documents)
+    upload_ingestion = ingestion_agent.validate_uploads(uploaded_files)
+    pipeline = RagGraphOrchestrator().process_documents([doc.file_path for doc in upload_ingestion.documents])
+    ingestion = pipeline.get("ingestion", upload_ingestion)
+    extraction = pipeline.get("extraction")
+    vector_store = pipeline.get("vector_store")
+    indexing = pipeline.get("indexing")
 
     st.session_state.vector_store = vector_store
     st.session_state.pipeline_report = {
         "ingestion": ingestion,
         "extraction": extraction,
         "indexing": indexing,
+        "graph_state": pipeline,
     }
     st.session_state.chat_history = []
+    st.session_state.latest_question = None
+    st.session_state.latest_response = None
+    st.session_state.latest_query_state = None
+    st.session_state.live_ragas_result = None
 
 
 def render_pipeline_report() -> None:
@@ -55,9 +63,21 @@ def render_pipeline_report() -> None:
         st.info("Upload documents to build the retrieval index.")
         return
 
+    if report.get("graph_state", {}).get("errors"):
+        st.error("Document processing stopped before the retrieval index was ready.")
+        with st.expander("Agent handoff report", expanded=True):
+            render_agent_state(report.get("graph_state", {}))
+        return
+
     ingestion = report["ingestion"]
     extraction = report["extraction"]
     indexing = report["indexing"]
+    if extraction is None or indexing is None:
+        st.warning("Document processing did not produce a complete pipeline report.")
+        with st.expander("Agent handoff report", expanded=True):
+            render_agent_state(report.get("graph_state", {}))
+        return
+
     st.success(
         f"Indexed {indexing.chunks_indexed} chunks into `{indexing.collection_name}` "
         f"from {len(extraction.documents)} document(s)."
@@ -110,6 +130,7 @@ def render_pipeline_report() -> None:
             ),
             language="json",
         )
+        render_agent_state(report.get("graph_state", {}))
 
 
 def render_chat() -> None:
@@ -118,12 +139,6 @@ def render_chat() -> None:
         st.chat_message("assistant").write("Upload and index documents first, then ask me about them.")
         return
 
-    retrieval_agent = RetrievalAgent(
-        vector_store=vector_store,
-        query_rewriter=LLMQueryRewriter(),
-        reranker=build_default_reranker(),
-    )
-    conversation_agent = ConversationAgent()
     message_container = st.container()
     export_container = st.container()
 
@@ -132,22 +147,114 @@ def render_chat() -> None:
     latest_response: RagOutput | None = None
     if query:
         st.session_state.chat_history.append(ChatTurn(role="user", content=query))
-        retrieval = retrieval_agent.retrieve(query)
-        latest_response = conversation_agent.answer(query, st.session_state.chat_history[-6:], retrieval)
+        graph_state = RagGraphOrchestrator().answer_question(query, st.session_state.chat_history[-6:], vector_store)
+        st.session_state.latest_query_state = graph_state
+        latest_response = graph_state.get("response")
+        if latest_response is None:
+            errors = graph_state.get("errors", ["The query pipeline did not return a response."])
+            latest_response = RagOutput(
+                answer=f"Agent flow failed: {errors[-1]}",
+                sources=[],
+                prompt="",
+                matches=[],
+            )
         st.session_state.chat_history.append(ChatTurn(role="assistant", content=latest_response.answer))
+        st.session_state.latest_question = query
+        st.session_state.latest_response = latest_response
+        st.session_state.live_ragas_result = None
+
+    response_for_tools = latest_response or st.session_state.latest_response
 
     with message_container:
         for turn in st.session_state.chat_history:
             st.chat_message(turn.role).write(turn.content)
 
-        if latest_response:
-            if latest_response.sources:
-                st.caption("Sources: " + "; ".join(source.label for source in latest_response.sources))
+        if response_for_tools:
+            if response_for_tools.sources:
+                st.caption("Sources: " + "; ".join(source.label for source in response_for_tools.sources))
+            render_live_ragas(response_for_tools)
             with st.expander("Retrieval transparency", expanded=False):
-                render_retrieval_transparency(latest_response)
+                render_agent_state(st.session_state.latest_query_state or {})
+                render_retrieval_transparency(response_for_tools)
 
     with export_container:
         render_conversation_exports()
+
+
+def render_agent_state(graph_state: dict) -> None:
+    if not graph_state:
+        return
+
+    st.write("**LangGraph state**")
+    st.code(
+        json.dumps(
+            {
+                "current_step": graph_state.get("current_step"),
+                "completed_steps": graph_state.get("completed_steps", []),
+                "errors": graph_state.get("errors", []),
+                "agent_steps": graph_state.get("agent_steps", []),
+            },
+            indent=2,
+        ),
+        language="json",
+    )
+
+
+def render_live_ragas(response: RagOutput) -> None:
+    question = st.session_state.latest_question
+    evaluate_clicked = st.button(
+        "Evaluate Answer Quality",
+        key="evaluate_latest_answer_quality",
+        use_container_width=True,
+    )
+
+    if evaluate_clicked:
+        from evals.live_ragas import evaluate_live_answer
+
+        contexts = [match.chunk.text for match in response.matches]
+        with st.spinner("Evaluating answer quality against retrieved context..."):
+            st.session_state.live_ragas_result = evaluate_live_answer(
+                question=question or "",
+                answer=response.answer,
+                retrieved_contexts=contexts,
+            )
+
+    result = st.session_state.live_ragas_result
+    if not result:
+        return
+
+    if result.get("status") == "success":
+        metrics = result.get("metrics", {})
+        faithfulness = metrics.get("faithfulness")
+        response_relevancy = metrics.get("response_relevancy")
+        faith_col, relevancy_col = st.columns(2)
+
+        with faith_col:
+            st.metric(
+                "Faithfulness",
+                format_metric_score(faithfulness),
+                help="Measures whether the answer is supported by retrieved document context.",
+            )
+        with relevancy_col:
+            st.metric(
+                "Response Relevancy",
+                format_metric_score(response_relevancy),
+                help="Measures whether the answer addresses the user question.",
+            )
+
+        st.info(
+            "These scores are evaluator-based estimates using retrieved context only. "
+            "They do not guarantee that retrieval found every relevant document."
+        )
+        return
+
+    st.warning(f"RAGAS evaluation unavailable: {result.get('reason', 'Unknown error')}")
+
+
+def format_metric_score(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    return f"{value:.3f}"
 
 
 def render_retrieval_transparency(response: RagOutput) -> None:

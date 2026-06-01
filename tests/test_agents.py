@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from agents import ChunkingEmbeddingAgent, ConversationAgent, DocumentIngestionAgent, RetrievalAgent
+from core.graph_orchestration import RagGraphOrchestrator
 from core.schemas import ChatTurn, ExtractedDocument, ExtractedPage, RetrievalMode, RetrievalScope
 from utils.transcript_export import conversation_to_pdf, conversation_to_text
 
@@ -93,6 +94,27 @@ def test_no_match_avoids_hallucination() -> None:
     response = ConversationAgent(llm_client=FakeLLM()).answer(query, [], retrieval)
 
     assert response.answer == "I could not find that in the uploaded documents."
+
+
+def test_conversation_agent_reports_missing_api_key_without_crashing(monkeypatch) -> None:
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    document = ExtractedDocument(
+        doc_id="doc_1",
+        filename="policy.pdf",
+        file_type="pdf",
+        pages=[ExtractedPage(page_number=1, text="The claims waiting period is thirty days.")],
+    )
+    store, _ = ChunkingEmbeddingAgent(
+        chunk_words=80,
+        overlap_words=10,
+        embedding_function=FakeEmbeddings(),
+    ).index("testmissingkey", [document])
+    retrieval = RetrievalAgent(store).retrieve("What is the claims waiting period?")
+
+    response = ConversationAgent().answer("What is covered?", [], retrieval)
+
+    assert response.answer.startswith("Groq could not generate a response.")
+    assert "Missing Groq API key" in response.answer
 
 
 def test_retrieval_agent_selects_modes() -> None:
@@ -218,3 +240,61 @@ def test_explicit_all_documents_scope_fetches_everything() -> None:
 
     assert retrieval.scope is RetrievalScope.ALL_DOCUMENTS
     assert set(retrieval.selected_documents) == {"01_quarterly_report.pdf", "02_employee_handbook.pdf"}
+
+
+def test_langgraph_query_orchestrator_runs_with_fake_store() -> None:
+    document = ExtractedDocument(
+        doc_id="doc_1",
+        filename="policy.pdf",
+        file_type="pdf",
+        pages=[ExtractedPage(page_number=1, text="The claims waiting period is thirty days.")],
+    )
+    store, _ = ChunkingEmbeddingAgent(
+        chunk_words=80,
+        overlap_words=10,
+        embedding_function=FakeEmbeddings(),
+    ).index("testgraph", [document])
+
+    class FakeRewriter:
+        def rewrite(self, query: str) -> list[str]:
+            return [query]
+
+    orchestrator = RagGraphOrchestrator(
+        query_rewriter=FakeRewriter(),
+        conversation_agent=ConversationAgent(llm_client=FakeLLM()),
+    )
+    state = orchestrator.answer_question("What is the claims waiting period?", [], store)
+
+    assert state["retrieval"].matches
+    assert "thirty days" in state["response"].answer
+    assert state["completed_steps"] == ["retrieve", "converse"]
+    assert [step["status"] for step in state["agent_steps"]] == ["completed", "completed"]
+    assert state["errors"] == []
+
+
+def test_langgraph_query_orchestrator_records_retrieval_errors() -> None:
+    class BrokenStore:
+        def search(self, query: str, top_k: int, min_similarity: float):
+            raise RuntimeError("search unavailable")
+
+        def keyword_search(self, query: str, top_k: int):
+            return []
+
+        def get_all(self):
+            return []
+
+        def get_by_filenames(self, filenames: list[str]):
+            return []
+
+    class FakeRewriter:
+        def rewrite(self, query: str) -> list[str]:
+            return [query]
+
+    orchestrator = RagGraphOrchestrator(query_rewriter=FakeRewriter())
+    state = orchestrator.answer_question("What is covered?", [], BrokenStore())
+
+    assert "response" not in state
+    assert state["completed_steps"] == []
+    assert state["agent_steps"][0]["step"] == "retrieve"
+    assert state["agent_steps"][0]["status"] == "failed"
+    assert "search unavailable" in state["errors"][0]

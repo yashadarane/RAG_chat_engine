@@ -31,11 +31,25 @@ $env:GROQ_API_KEY="your_groq_key_here"
          data\uploads\your_session\03_api_documentation.pdf
 ```
 
+The runner resets memory per eval question, retries Groq 429 responses, skips failed generations from RAGAS scoring, and batches judge calls.
+
 Optional overrides:
 
 ```powershell
 $env:RAGAS_LLM_MODEL="llama-3.3-70b-versatile"
 $env:RAGAS_LOCAL_EMBEDDING_MODEL="models/all-MiniLM-L6-v2"
+```
+
+Rate-limit controls:
+
+```powershell
+.\.venv\Scripts\python.exe evals\run_eval.py `
+  --docs data\uploads\your_session\01_quarterly_report.pdf `
+         data\uploads\your_session\02_employee_handbook.pdf `
+         data\uploads\your_session\03_api_documentation.pdf `
+  --rag-delay-seconds 10 `
+  --ragas-batch-size 1 `
+  --ragas-delay-seconds 30
 ```
 
 If you later want OpenAI embeddings as the RAGAS evaluator embedding model, set:

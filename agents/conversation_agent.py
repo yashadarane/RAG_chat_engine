@@ -10,7 +10,7 @@ class ConversationAgent:
     """Agent 4B: build grounded prompts and generate final responses."""
 
     def __init__(self, llm_client: LanguageModelClient | None = None) -> None:
-        self.llm_client = llm_client or GroqLLMClient()
+        self.llm_client = llm_client
 
     def answer(
         self,
@@ -32,7 +32,8 @@ class ConversationAgent:
             )
 
         try:
-            answer = self.llm_client.generate(prompt)
+            client = self.llm_client or GroqLLMClient()
+            answer = client.generate(prompt)
         except Exception as exc:
             answer = (
                 "Groq could not generate a response. Check that GROQ_API_KEY is set "
