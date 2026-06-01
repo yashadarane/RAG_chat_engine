@@ -1,7 +1,5 @@
 # Autonomous Multi-Agent Document-Grounded Chat Engine using RAG and Agentic AI
 
-## 1. Title Page
-
 **Project Title:** Autonomous Multi-Agent Document-Grounded Chat Engine using RAG and Agentic AI  
 **Internship Assignment Name:** Chat Engine Assignment - RAG + Agentic AI  
 
